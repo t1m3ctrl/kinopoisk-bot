@@ -1,0 +1,6 @@
+redis:
+  address: "redis:6379"
+  ttl: "30m"
+image:
+  cache:
+    ttl: "30m"

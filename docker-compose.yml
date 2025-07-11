@@ -1,0 +1,32 @@
+services:
+  bot:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    restart: always
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+
+  redisinsight:
+    image: redislabs/redisinsight
+    container_name: redisinsight
+    restart: always
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+    volumes:
+      - redis-insight:/data
+
+volumes:
+  redis_data:
+  redis-insight:
