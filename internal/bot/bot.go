@@ -626,7 +626,7 @@ func (b *Bot) sendSingleMovie(chatID int64, movie model.Movie, index int) {
 		fmt.Sprintf("%d. %s", index, formatMovieDescription(movie)))
 	textMsg.ParseMode = "HTML"
 	textMsg.DisableWebPagePreview = true
-	send, err := b.api.Send(textMsg)
+	_, err = b.api.Send(textMsg)
 	if err != nil {
 		slog.Error("Failed to send single movie message")
 	}
