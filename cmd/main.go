@@ -37,9 +37,25 @@ func main() {
 	defer cacheCancel()
 	go bot.ClearImageCachePeriodically(ctx, viper.GetDuration("image.cache.ttl"))
 
-	redisClient, err := redis.NewRedisClient(viper.GetString("redis.address"), viper.GetDuration("redis.ttl"))
-	if err != nil {
-		slog.Error("failed to create Redis client", err)
+	redisAddresses := viper.GetStringSlice("redis.address")
+	var redisClient *redis.RedisClient
+	var err error
+
+	for _, addr := range redisAddresses {
+		redisClient, err = redis.NewRedisClient(
+			addr,
+			viper.GetString("redis.password"),
+			viper.GetInt("redis.db"),
+			viper.GetDuration("redis.ttl"))
+		if err == nil {
+			slog.Info("Connected to Redis", "address", addr)
+			break
+		}
+		slog.Warn("Failed to connect to Redis", "address", addr, "error", err)
+	}
+
+	if redisClient == nil {
+		slog.Error("Could not connect to any Redis instance. Exiting.")
 		os.Exit(1)
 	}
 

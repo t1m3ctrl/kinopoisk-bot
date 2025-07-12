@@ -1,6 +1,10 @@
 redis:
-  address: "redis:6379"
+  address:
+  - "redis:6379"
+  - "localhost:6379"
   ttl: "30m"
+  password: ""
+  db: "0"
 image:
   cache:
     ttl: "30m"

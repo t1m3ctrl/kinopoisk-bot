@@ -16,11 +16,11 @@ type RedisClient struct {
 	stateTTL time.Duration
 }
 
-func NewRedisClient(addr string, stateTTL time.Duration) (*RedisClient, error) {
+func NewRedisClient(addr string, password string, db int, stateTTL time.Duration) (*RedisClient, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
-		Password: "",
-		DB:       0,
+		Password: password,
+		DB:       db,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
