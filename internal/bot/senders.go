@@ -28,20 +28,38 @@ func (b *Bot) sendMovies(chatID int64, movies []model.Movie, page int, paginatio
 	}()
 
 	if len(movies) == 0 {
-		msg := tgbotapi.NewMessage(chatID, "Фильмы не найдены")
-		_, err := b.api.Send(msg)
-		if err != nil {
-			slog.Error("Error sending no movies found message", "error", err)
-		}
+		b.sendNoMoviesFound(chatID)
 		return
 	}
 
-	tempMsg, err := b.api.Send(tgbotapi.NewMessage(chatID, "⏳ Подготавливаю постеры.."))
-	if err != nil {
-		slog.Error("Error sending session expired message", "error", err)
-	}
+	tempMsg := b.sendTempMessage(chatID, "⏳ Подготавливаю постеры..")
+	posters := b.loadPostersConcurrently(movies)
+	mediaGroup := b.createMediaGroup(movies, posters)
 
-	// Параллельная загрузка изображений с сохранением порядка
+	b.cleanupTempMessage(chatID, tempMsg)
+	b.sendChatAction(chatID, tgbotapi.ChatUploadPhoto)
+	b.sendMediaGroupOrFallback(chatID, mediaGroup, movies)
+	b.sendMoviesDescription(chatID, movies)
+	b.sendPagination(chatID, page, paginationPrefix)
+}
+
+func (b *Bot) sendNoMoviesFound(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "Фильмы не найдены")
+	_, err := b.api.Send(msg)
+	if err != nil {
+		slog.Error("Error sending no movies found message", "error", err)
+	}
+}
+
+func (b *Bot) sendTempMessage(chatID int64, text string) tgbotapi.Message {
+	tempMsg, err := b.api.Send(tgbotapi.NewMessage(chatID, text))
+	if err != nil {
+		slog.Error("Error sending temp message", "error", err)
+	}
+	return tempMsg
+}
+
+func (b *Bot) loadPostersConcurrently(movies []model.Movie) []tgbotapi.RequestFileData {
 	type posterResult struct {
 		index  int
 		poster tgbotapi.RequestFileData
@@ -50,7 +68,6 @@ func (b *Bot) sendMovies(chatID int64, movies []model.Movie, page int, paginatio
 	results := make(chan posterResult, len(movies))
 	var wg sync.WaitGroup
 
-	// Запускаем горутины для загрузки каждого изображения
 	for i, movie := range movies {
 		wg.Add(1)
 		go func(idx int, url string) {
@@ -60,23 +77,19 @@ func (b *Bot) sendMovies(chatID int64, movies []model.Movie, page int, paginatio
 		}(i, movie.Poster)
 	}
 
-	// Закрываем канал после завершения всех горутин
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Собираем результаты в правильном порядке
 	posters := make([]tgbotapi.RequestFileData, len(movies))
 	for res := range results {
 		posters[res.index] = res.poster
 	}
+	return posters
+}
 
-	slog.Debug("movies downloaded",
-		"duration", time.Since(start).Seconds(),
-		"movies", len(movies))
-
-	// Формируем и отправляем медиагруппу
+func (b *Bot) createMediaGroup(movies []model.Movie, posters []tgbotapi.RequestFileData) []interface{} {
 	var mediaGroup []interface{}
 	for i, movie := range movies {
 		photo := tgbotapi.NewInputMediaPhoto(posters[i])
@@ -87,24 +100,28 @@ func (b *Bot) sendMovies(chatID int64, movies []model.Movie, page int, paginatio
 		photo.Caption = caption
 		mediaGroup = append(mediaGroup, photo)
 	}
+	return mediaGroup
+}
 
-	slog.Debug("formed groups",
-		"duration", time.Since(start).Seconds(),
-		"movies", len(movies))
-
-	if tempMsg.MessageID != 0 {
-		_, err := b.api.Request(tgbotapi.NewDeleteMessage(chatID, tempMsg.MessageID))
-		if err != nil {
-			slog.Error("Error deleting temp message", "error", err)
-		}
+func (b *Bot) cleanupTempMessage(chatID int64, tempMsg tgbotapi.Message) {
+	if tempMsg.MessageID == 0 {
+		return
 	}
-
-	_, err = b.api.Request(tgbotapi.NewChatAction(chatID, tgbotapi.ChatUploadPhoto))
+	_, err := b.api.Request(tgbotapi.NewDeleteMessage(chatID, tempMsg.MessageID))
 	if err != nil {
-		slog.Error("Error sending Chat Upload Photo", "error", err)
+		slog.Error("Error deleting temp message", "error", err)
 	}
+}
 
-	_, err = b.api.SendMediaGroup(tgbotapi.MediaGroupConfig{
+func (b *Bot) sendChatAction(chatID int64, action string) {
+	_, err := b.api.Request(tgbotapi.NewChatAction(chatID, action))
+	if err != nil {
+		slog.Error("Error sending chat action", "action", action, "error", err)
+	}
+}
+
+func (b *Bot) sendMediaGroupOrFallback(chatID int64, mediaGroup []interface{}, movies []model.Movie) {
+	_, err := b.api.SendMediaGroup(tgbotapi.MediaGroupConfig{
 		ChatID: chatID,
 		Media:  mediaGroup,
 	})
@@ -114,60 +131,37 @@ func (b *Bot) sendMovies(chatID int64, movies []model.Movie, page int, paginatio
 			b.sendSingleMovie(chatID, movie, i+1)
 		}
 	}
+}
 
-	slog.Debug("Sent poster result",
-		"duration", time.Since(start).Seconds(),
-		"movies", len(movies))
+func (b *Bot) sendMoviesDescription(chatID int64, movies []model.Movie) {
+	b.sendChatAction(chatID, tgbotapi.ChatTyping)
 
-	// Отправка текстового описания и пагинации (остается без изменений)
-	_, err = b.api.Request(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
-	if err != nil {
-		slog.Error("Error sending Chat Typing", "error", err)
-	}
 	var description string
 	for i, movie := range movies {
 		description += fmt.Sprintf("%d. %s\n", i+1, formatMovieDescription(movie))
 	}
+
 	msg := tgbotapi.NewMessage(chatID, description)
 	msg.ParseMode = "HTML"
 	msg.DisableWebPagePreview = true
-	_, err = b.api.Send(msg)
+	_, err := b.api.Send(msg)
 	if err != nil {
 		slog.Error("Error sending description", "error", err)
 	}
-
-	b.sendPagination(chatID, page, paginationPrefix)
 }
 
 func (b *Bot) sendPersons(chatID int64, persons []model.Person, page int) {
 	if len(persons) == 0 {
-		msg := tgbotapi.NewMessage(chatID, "Актеры/режиссеры не найдены")
-		_, err := b.api.Send(msg)
-		if err != nil {
-			slog.Error("Error sending no persons found message", "error", err)
-		}
+		b.sendNoPersonsFound(chatID)
 		return
 	}
 
 	text := "Результаты поиска актеров/режиссеров:\n\n"
-	var buttons []tgbotapi.InlineKeyboardButton
-
 	for i, person := range persons {
 		text += fmt.Sprintf("%d. %s\n", i+1, formatPersonDescription(person))
-		btn := tgbotapi.NewInlineKeyboardButtonData(
-			person.Name,
-			"person_select:"+strconv.Itoa(person.Id),
-		)
-		buttons = append(buttons, btn)
 	}
 
-	// Кнопки пагинации
-	paginationRow := b.createPersonPaginationRow(page)
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(buttons...),
-		paginationRow,
-	)
-
+	keyboard := b.createPersonsKeyboard(persons, page)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = keyboard
 	_, err := b.api.Send(msg)
@@ -176,8 +170,33 @@ func (b *Bot) sendPersons(chatID int64, persons []model.Person, page int) {
 	}
 }
 
-func (b *Bot) sendPagination(chatID int64, page int, prefix string) {
+func (b *Bot) sendNoPersonsFound(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "Актеры/режиссеры не найдены")
+	_, err := b.api.Send(msg)
+	if err != nil {
+		slog.Error("Error sending no persons found message", "error", err)
+	}
+}
+
+func (b *Bot) createPersonsKeyboard(persons []model.Person, page int) tgbotapi.InlineKeyboardMarkup {
 	var buttons []tgbotapi.InlineKeyboardButton
+	for _, person := range persons {
+		btn := tgbotapi.NewInlineKeyboardButtonData(
+			person.Name,
+			"person_select:"+strconv.Itoa(person.Id),
+		)
+		buttons = append(buttons, btn)
+	}
+
+	paginationRow := b.createPersonPaginationRow(page)
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(buttons...),
+		paginationRow,
+	)
+}
+
+func (b *Bot) sendPagination(chatID int64, page int, prefix string) {
+	buttons := []tgbotapi.InlineKeyboardButton{}
 	if page > 1 {
 		buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData("⬅", prefix+":"+strconv.Itoa(page-1)))
 	}
@@ -192,24 +211,20 @@ func (b *Bot) sendPagination(chatID int64, page int, prefix string) {
 }
 
 func (b *Bot) sendSingleMovie(chatID int64, movie model.Movie, index int) {
-	// Отправка постера
 	poster := GetSafePoster(movie.Poster)
 	photoMsg := tgbotapi.NewPhoto(chatID, poster)
 	photoMsg.Caption = formatMovieCaption(movie)
 	_, err := b.api.Send(photoMsg)
 	if err != nil {
-		slog.Error("Failed to send single movie poster",
-			"movie", movie.Title,
-			"error", err)
+		slog.Error("Failed to send movie poster", "movie", movie.Title, "error", err)
 	}
 
-	// Отправка текстового описания
-	textMsg := tgbotapi.NewMessage(chatID,
-		fmt.Sprintf("%d. %s", index, formatMovieDescription(movie)))
+	text := fmt.Sprintf("%d. %s", index, formatMovieDescription(movie))
+	textMsg := tgbotapi.NewMessage(chatID, text)
 	textMsg.ParseMode = "HTML"
 	textMsg.DisableWebPagePreview = true
 	_, err = b.api.Send(textMsg)
 	if err != nil {
-		slog.Error("Failed to send single movie message")
+		slog.Error("Failed to send movie description", "movie", movie.Title, "error", err)
 	}
 }
