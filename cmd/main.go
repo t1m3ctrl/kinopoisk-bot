@@ -42,12 +42,21 @@ func main() {
 	var err error
 
 	for _, addr := range redisAddresses {
-		redisClient, err = redis.NewRedisClient(addr, viper.GetDuration("redis.ttl"))
+		redisClient, err = redis.NewRedisClient(
+			addr,
+			viper.GetString("redis.password"),
+			viper.GetInt("redis.db"),
+			viper.GetDuration("redis.ttl"))
 		if err == nil {
 			slog.Info("Connected to Redis", "address", addr)
 			break
 		}
 		slog.Warn("Failed to connect to Redis", "address", addr, "error", err)
+	}
+
+	if redisClient == nil {
+		slog.Error("Could not connect to any Redis instance. Exiting.")
+		os.Exit(1)
 	}
 
 	kinopoiskAPI := api.NewKinopoiskAPI(viper.GetString("APIKey"))

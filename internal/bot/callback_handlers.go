@@ -14,7 +14,6 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	// Отправляем подтверждение callback
 	callbackConfig := tgbotapi.CallbackConfig{
 		CallbackQueryID: query.ID,
 	}
@@ -26,9 +25,20 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	parts := strings.Split(data, ":")
 	chatID := query.Message.Chat.ID
 
+	requireSecondParam := map[string]bool{
+		"movie_page":         true,
+		"person_page":        true,
+		"person_select":      true,
+		"person_movies_page": true,
+	}
+
+	if requireSecondParam[parts[0]] && len(parts) < 2 {
+		slog.Warn("Invalid callback format", "data", data)
+		return
+	}
+
 	switch parts[0] {
 	case "cancel_search":
-		// Удаляем состояние из Redis
 		if err := b.redis.DeleteState(chatID); err != nil {
 			slog.Error("Error deleting state from Redis", "error", err)
 		}
@@ -39,27 +49,15 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 			slog.Error("Error sending cancel message", "error", err)
 		}
 	case "movie_page":
-		if len(parts) < 2 {
-			return
-		}
 		page, _ := strconv.Atoi(parts[1])
 		b.handleMoviePagination(chatID, page)
 	case "person_page":
-		if len(parts) < 2 {
-			return
-		}
 		page, _ := strconv.Atoi(parts[1])
 		b.handlePersonPagination(chatID, page)
 	case "person_select":
-		if len(parts) < 2 {
-			return
-		}
 		personID, _ := strconv.Atoi(parts[1])
 		b.handlePersonSelect(chatID, personID)
 	case "person_movies_page":
-		if len(parts) < 2 {
-			return
-		}
 		page, _ := strconv.Atoi(parts[1])
 		b.handlePersonMoviesPagination(chatID, page)
 	}
@@ -87,7 +85,6 @@ func (b *Bot) handleMoviePagination(chatID int64, page int) {
 		return
 	}
 
-	// Обновляем состояние
 	state.Page = page
 	if err := b.redis.SaveState(chatID, *state); err != nil {
 		slog.Error("Error saving state to Redis", "error", err)
@@ -118,7 +115,6 @@ func (b *Bot) handlePersonPagination(chatID int64, page int) {
 		return
 	}
 
-	// Обновляем состояние
 	state.Page = page
 	if err := b.redis.SaveState(chatID, *state); err != nil {
 		slog.Error("Error saving state to Redis", "error", err)
@@ -128,7 +124,6 @@ func (b *Bot) handlePersonPagination(chatID int64, page int) {
 }
 
 func (b *Bot) handlePersonSelect(chatID int64, personID int) {
-	// Создаем новое состояние для фильмов по персоне
 	state := model.SearchState{
 		Type:     searchTypePersonMovies,
 		PersonID: personID,
@@ -166,7 +161,6 @@ func (b *Bot) handlePersonMoviesPagination(chatID int64, page int) {
 		return
 	}
 
-	// Обновляем состояние
 	state.Page = page
 	if err := b.redis.SaveState(chatID, *state); err != nil {
 		slog.Error("Error saving state to Redis", "error", err)

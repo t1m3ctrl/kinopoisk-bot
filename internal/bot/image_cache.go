@@ -31,7 +31,6 @@ var (
 	}
 )
 
-// InitImageCache загружает fallback изображение при старте
 func InitImageCache() error {
 	fallbackMutex.Lock()
 	defer fallbackMutex.Unlock()
@@ -55,13 +54,16 @@ func InitImageCache() error {
 	return nil
 }
 
-// GetSafePoster возвращает безопасное представление постера
 func GetSafePoster(url string) tgbotapi.RequestFileData {
+	//start := time.Now()
+	//defer func() {
+	//	slog.Debug("Execution time", "duration", time.Since(start))
+	//}()
+
 	if url == "" {
 		return getFallbackImageReader()
 	}
 
-	// Проверка кэша
 	if cached, ok := imageCache.Load(url); ok {
 		switch v := cached.(type) {
 		case []byte:
@@ -74,7 +76,6 @@ func GetSafePoster(url string) tgbotapi.RequestFileData {
 		}
 	}
 
-	// Загрузка и проверка изображения
 	imgData, contentType, err := downloadAndValidateImage(url)
 	if err != nil {
 		slog.Warn("Failed to download image", "url", url, "error", err)
@@ -82,10 +83,8 @@ func GetSafePoster(url string) tgbotapi.RequestFileData {
 		return getFallbackImageReader()
 	}
 
-	// Определяем расширение по Content-Type
 	ext := getExtensionFromContentType(contentType)
 
-	// Сохраняем в кэш
 	imageCache.Store(url, imgData)
 
 	return tgbotapi.FileBytes{
@@ -95,6 +94,11 @@ func GetSafePoster(url string) tgbotapi.RequestFileData {
 }
 
 func downloadAndValidateImage(url string) ([]byte, string, error) {
+	//start := time.Now()
+	//defer func() {
+	//	slog.Debug("Execution time", "duration", time.Since(start))
+	//}()
+
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, "", fmt.Errorf("http get failed: %w", err)

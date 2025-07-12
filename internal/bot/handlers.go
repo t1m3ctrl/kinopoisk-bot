@@ -65,14 +65,12 @@ func (b *Bot) awaitingQuery(chatID int64, searchType string) {
 }
 
 func (b *Bot) processSearchQuery(msg *tgbotapi.Message) {
-	// Получаем состояние из Redis
 	state, err := b.redis.GetState(msg.Chat.ID)
 	if err != nil {
 		slog.Error("Error getting state from Redis", "error", err)
 		return
 	}
 
-	// Если состояние не найдено, просим выбрать тип поиска
 	if state == nil {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Пожалуйста, выберите тип поиска с помощью кнопок ниже 👇")
 		reply.ReplyMarkup = b.createMainMenuKeyboard()
@@ -94,7 +92,6 @@ func (b *Bot) processSearchQuery(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Обновляем состояние
 	state.Query = query
 	state.Page = 1
 	if err := b.redis.SaveState(msg.Chat.ID, *state); err != nil {
